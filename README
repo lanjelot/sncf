@@ -1,0 +1,25 @@
+python c'est chanmé !
+git c'est génial !
+
+http://www.youtube.com/watch?v=WGoi1MSGu64
+
+Je suppose que comme moi vous avez remarqué que les prix des billets de train
+sur voyages-sncf.com c'était du grand n'importe quoi. C'est cher et ça varie
+tout le temps. Et surtout parfois, on voit le prix d'un billet chuter (occaz'
+de dernière minute ou options non renouvelées). Bref, ce serait pas mal d'être
+alerté par e-mail dès qu'un billet est bradé.
+
+C'est pourquoi j'ai codé ce script qui permet de surveiller la fluctuation des
+prix des billets pour un trajet en particulier.
+
+Le script vous prévient par email dès que le prix d'un billet baisse ou
+augmente, et vous signale si le trajet est du coup devenu moins cher qu'avant
+(en effet c'est pas parce que le prix d'un billet a baissé que c'est devenu le
+billet le moins cher). 
+
+La première fois que le script est lancé, il vous envoie un email avec la liste
+de tous les trains qu'il a relevés. Si un nouveau train qui n'était pas là
+avant apparaît, ou si un train qui était là avant disparait, il vous le dira
+aussi.
+
+Enjoy!
