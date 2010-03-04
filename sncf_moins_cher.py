@@ -32,7 +32,7 @@ class TrainInfo():
         self.delta_time = '%02dh%02d' % reduce(lambda x,y: divmod(x[0], y) + x[1:], [(delta.seconds,),60,60])[:2]
 
     def __str__(self):
-        return '#%(id)s: %(departure_time)s-%(arrival_time)s (%(delta_time)s) %(price).2f€' % self.__dict__
+        return '%(id)s: %(departure_time)s-%(arrival_time)s (%(delta_time)s) %(price).2f€' % self.__dict__
 
 class ProposalsParser(SGMLParser):
     def reset(self):
@@ -235,6 +235,8 @@ def compareProposals(old_proposals, new_proposals):
         new_minprice = min_price(new_proposals)
         if new_minprice < old_minprice:
             ret_report.append("YES! C'est maintenant moins cher qu'avant !!")
+        elif new_minprice > old_minprice:
+            ret_report.append("arf... c'est redevenu plus cher")
         ret_report.append('Le moins cher: %.2f€' % new_minprice)
 
     return ret_proposals, ret_report
@@ -258,10 +260,10 @@ def run():
         inward_proposals, inward_report = compareProposals(inward_proposals, last_inward_proposals)
 
         any_change = bool(filter(lambda r: re.match(r'↑|↓|N|D', r), outward_report + inward_report))
-        any_cheaper = bool(filter(lambda r: re.match(r'YES', r), outward_report + inward_report))
+        any_cheaper = bool(filter(lambda r: re.match(r'YES|arf', r), outward_report + inward_report))
 
         if (opts.reportall and any_change) or (not opts.reportall and any_cheaper) or first_time:
-          send_email(outward_report, inward_report)
+            send_email(outward_report, inward_report)
 
         if opts.savefile:
             fd = open(opts.savefile, 'wb')
@@ -274,11 +276,11 @@ def run():
 
 def setupLogger():
     if opts.syslog and os.path.exists('/dev/log'):
-      handler = logging.handlers.SysLogHandler(address='/dev/log')
-      log_fmt = '%(filename)s[%(process)d]: %(levelname)-5s - %(message)s'
+        handler = logging.handlers.SysLogHandler(address='/dev/log')
+        log_fmt = '%(filename)s[%(process)d]: %(levelname)-5s - %(message)s'
     else:
-      handler = logging.StreamHandler(sys.stdout)
-      log_fmt = '%(asctime)s %(filename)s[%(process)d]: %(levelname)-5s - %(message)s'
+        handler = logging.StreamHandler(sys.stdout)
+        log_fmt = '%(asctime)s %(filename)s[%(process)d]: %(levelname)-5s - %(message)s'
     handler.setFormatter(logging.Formatter(log_fmt))
     handler.setLevel(logging.DEBUG)
     
@@ -317,8 +319,8 @@ def parseOptions():
         'Run an online query and save proposals to file. Next run will load previously saved proposals from file, ' \
         'run a new online query and report any changes (price drop/raise, ...)', metavar='filepath')
     group3.add_option('-a', '--report-all', dest='reportall', action='store_true', default=False, help='Report ' \
-        'any price drop/raise, or any new/removed train. Default is to only report when a single trip becomes ' \
-        'cheaper than before')
+        'any price drop/raise, or any recently added/removed proposal. Default is to only report when a single ' \
+        'trip becomes cheaper than before')
     group3.add_option('-d', '--debug', dest='debug', action='store_true', default=False, 
         help='Enable debug messages')
     group3.add_option('-s', '--syslog', dest='syslog', action='store_true', default=False, 
