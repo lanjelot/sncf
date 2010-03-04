@@ -242,20 +242,26 @@ def compareProposals(old_proposals, new_proposals):
 def run():
     outward_proposals = {}
     inward_proposals = {}
+    first_time = False # if run for the first time, send an email even if user set reportall to false
 
     if opts.savefile and os.path.isfile(opts.savefile) and os.path.getsize(opts.savefile) > 0:
         fd = open(opts.savefile, 'rb')
         outward_proposals = pickle.load(fd)
         inward_proposals = pickle.load(fd)
         fd.close()
+    else:
+        first_time = True
 
     while True:
         last_outward_proposals, last_inward_proposals = lastProposals() 
         outward_proposals, outward_report = compareProposals(outward_proposals, last_outward_proposals)
         inward_proposals, inward_report = compareProposals(inward_proposals, last_inward_proposals)
 
-        if filter(lambda r: re.match(r'↑|↓|N|D', r), outward_report + inward_report):
-            send_email(outward_report, inward_report)
+        any_change = bool(filter(lambda r: re.match(r'↑|↓|N|D', r), outward_report + inward_report))
+        any_cheaper = bool(filter(lambda r: re.match(r'YES', r), outward_report + inward_report))
+
+        if (opts.reportall and any_change) or (not opts.reportall and any_cheaper) or first_time:
+          send_email(outward_report, inward_report)
 
         if opts.savefile:
             fd = open(opts.savefile, 'wb')
@@ -267,8 +273,13 @@ def run():
         time.sleep(opts.interval)
 
 def setupLogger():
-    handler = os.path.exists('/dev/log') and logging.handlers.SysLogHandler(address='/dev/log') or logging.StreamHandler()
-    handler.setFormatter(logging.Formatter('%(filename)s[%(process)d]: %(levelname)-5s - %(message)s'))
+    if opts.syslog and os.path.exists('/dev/log'):
+      handler = logging.handlers.SysLogHandler(address='/dev/log')
+      log_fmt = '%(filename)s[%(process)d]: %(levelname)-5s - %(message)s'
+    else:
+      handler = logging.StreamHandler(sys.stdout)
+      log_fmt = '%(asctime)s %(filename)s[%(process)d]: %(levelname)-5s - %(message)s'
+    handler.setFormatter(logging.Formatter(log_fmt))
     handler.setLevel(logging.DEBUG)
     
     logger = logging.getLogger('nevermind')
@@ -305,7 +316,13 @@ def parseOptions():
     group3.add_option('-w', '--savefile', dest='savefile', help='Enable single run mode (useful for scheduled runs). ' \
         'Run an online query and save proposals to file. Next run will load previously saved proposals from file, ' \
         'run a new online query and report any changes (price drop/raise, ...)', metavar='filepath')
-    group3.add_option('-d', '--debug', dest='debug', action='store_true', default=False, help='Enable debug messages')
+    group3.add_option('-a', '--report-all', dest='reportall', action='store_true', default=False, help='Report ' \
+        'any price drop/raise, or any new/removed train. Default is to only report when a single trip becomes ' \
+        'cheaper than before')
+    group3.add_option('-d', '--debug', dest='debug', action='store_true', default=False, 
+        help='Enable debug messages')
+    group3.add_option('-s', '--syslog', dest='syslog', action='store_true', default=False, 
+        help='Enable logging to syslog')
     group3.add_option('-i', '--ignore', dest='ignore', action='append', default=[], help='Train to ignore. '\
         'Use this option multiple times to ignore more trains', metavar='trainID')
 
