@@ -200,7 +200,7 @@ def compareProposals(old_proposals, new_proposals):
     # compare old vs new
     for new_proposal_id, new_proposal_info in sorted(new_proposals.iteritems(), key=lambda x: x[1].departure_time):
         # new proposal
-        if not old_proposals.has_key(new_proposal_id):
+        if new_proposal_id not in old_proposals.keys():
             logger.info('New proposal: %s' % new_proposal_info)
             ret_report.append('N  %s' % new_proposal_info)
         else:
@@ -318,9 +318,9 @@ def parseOptions():
     group3.add_option('-w', '--savefile', dest='savefile', help='Enable single run mode (useful for scheduled runs). ' \
         'Run an online query and save proposals to file. Next run will load previously saved proposals from file, ' \
         'run a new online query and report any changes (price drop/raise, ...)', metavar='filepath')
-    group3.add_option('-a', '--report-all', dest='reportall', action='store_true', default=False, help='Report ' \
-        'any price drop/raise, or any recently added/removed proposal. Default is to only report when a single ' \
-        'trip becomes cheaper than before')
+    group3.add_option('-a', '--report-all', dest='reportall', action='store_true', default=False, help='Send an ' \
+        'email report for any price drop/raise, or any recently added/removed proposal. Default is to only mail ' \
+        'a report when the lowest fare for a single trip becomes cheaper or more expensive')
     group3.add_option('-d', '--debug', dest='debug', action='store_true', default=False, 
         help='Enable debug messages')
     group3.add_option('-s', '--syslog', dest='syslog', action='store_true', default=False, 
