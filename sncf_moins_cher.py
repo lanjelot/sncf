@@ -18,7 +18,6 @@ import datetime
 from datetime import datetime
 import email.utils
 
-# J'ENCULE LA SNCF AVEC DU BALLAST
 
 class TrainInfo():
     def __init__(self, id, departure_time, arrival_time, price):
@@ -102,7 +101,9 @@ def lastProposals():
                  '%(inward_time)s&nbPassenger=1&classe=2&train=Rechercher' % search_params
 
     proxy_handler = urllib2.ProxyHandler() #{'http': 'http://127.0.0.1:8181', 'https': 'http://127.0.0.1:8181'})
-    headers = {'User-Agent': 'Opera 9.7 (Windows NT 5.2; U; en)', 'Referer': 'http://www.voyages-sncf.com/'}
+    headers = {'User-Agent': 'Mozilla/4.0 (compatible; MSIE 6.0; Windows NT 5.1)', 
+        'Referer': 'http://www.voyages-sncf.com/'}
+
     opener = urllib2.build_opener(proxy_handler, MyDefaultErrorHandler(), 
         MyRedirectHandler(), urllib2.HTTPCookieProcessor())
     opener.addheaders = headers.items()
@@ -132,7 +133,7 @@ def lastProposals():
                     '&UPGRADED_PREFIX_ID_JOURNEY_ID_PROPOSAL=notUpgraded_0_0' \
                     '&action%%3Abook=Valider+cet+aller' % outward_hid
         referer = 'http://www.voyages-sncf.com/billet-train/resultats?hid=%s' % outward_hid
-        req = urllib2.Request(url='http://www.voyages-sncf.com/weblogic/proposals/', data=post_body, 
+        req = urllib2.Request('http://www.voyages-sncf.com/weblogic/proposals/', data=post_body, 
                               headers={'Referer': referer})
         time.sleep(5) # behave as an end-user reading through the proposals
         o = opener.open(req)
@@ -150,7 +151,7 @@ def lastProposals():
 
     return (outward_proposals, inward_proposals)
 
-def send_email(outward_report, inward_report):
+def sendEmail(outward_report, inward_report):
     if not (opts.to_addr and opts.from_addr): return
 
     msg = ''
@@ -230,7 +231,7 @@ def compareProposals(old_proposals, new_proposals):
     
     # check if it has become cheaper than before
     if old_proposals:
-        min_price = lambda p: sorted(p.itervalues(), key=lambda x: x.price)[0].price
+        min_price = lambda p: min(p.itervalues(), key=lambda x: x.price).price
         old_minprice = min_price(old_proposals)
         new_minprice = min_price(new_proposals)
         if new_minprice < old_minprice:
@@ -263,7 +264,7 @@ def run():
         any_cheaper = bool(filter(lambda r: re.match(r'YES|arf', r), outward_report + inward_report))
 
         if (opts.reportall and any_change) or (not opts.reportall and any_cheaper) or first_time:
-            send_email(outward_report, inward_report)
+            sendEmail(outward_report, inward_report)
 
         if opts.savefile:
             fd = open(opts.savefile, 'wb')
