@@ -18,7 +18,6 @@ import datetime
 from datetime import datetime
 import email.utils
 
-
 class TrainInfo():
     def __init__(self, id, departure_time, arrival_time, price):
         self.id = id
@@ -37,50 +36,56 @@ class ProposalsParser(SGMLParser):
     def reset(self):
         SGMLParser.reset(self)
         self.in_summary = False
+        self.in_departure = False
+        self.in_today = False
         self.proposals = {}
+        self.end_of_day = False
 
     def start_table(self, attrs):
         strattrs = ''.join([' %s="%s"' % (key, value) for key, value in attrs])
-        if re.search(r'capitulatif des propositions', strattrs):
+        if re.search(r'Recapitulatif des propositions trains', strattrs):
             self.in_summary = True
-    
-    def start_a(self, attrs):
-        if self.in_summary: 
-            href = dict(attrs)['href']
-            parts = href.split('_')
-            key = parts[-1]
-            self.proposals[key] = TrainInfo(id=key, departure_time=parts[2], arrival_time=parts[3], price=parts[4])
 
     def end_table(self):
         self.in_summary = False
 
-class MyDefaultErrorHandler(urllib2.HTTPDefaultErrorHandler):
-    def http_error_default(self, req, fp, code, msg, headers):
-        result = urllib2.HTTPError(
-            req.get_full_url(), code, msg, headers, fp)
-        result.status = code
-        return result
+    def start_tr(self, attrs):
+        if self.in_summary:
+            if dict(attrs)['class'] == 'departureTime':
+                self.in_departure = True
 
-class MyRedirectHandler(urllib2.HTTPRedirectHandler):
-    def http_error_301(self, req, fp, code, msg, headers):
-        result = urllib2.HTTPRedirectHandler.http_error_301(
-            self, req, fp, code, msg, headers)
-        result.status = code
-        return result
+    def end_tr(self):
+        self.in_departure = False
 
-    def http_error_302(self, req, fp, code, msg, headers):
-        result = urllib2.HTTPRedirectHandler.http_error_302(
-            self, req, fp, code, msg, headers)
-        result.status = code
-        return result
+    def start_td(self, attrs):
+        if self.in_departure:
+            self.in_today = dict(attrs)['class'] == ''
+            if not self.in_today:
+                self.end_of_day = True
 
-def getProposals(req):
+    def start_a(self, attrs):
+        if self.in_departure and self.in_today:
+            href = dict(attrs)['href']
+            parts = href.split('_')
+            key = parts[-1]
+            self.proposals[key] = TrainInfo(id=key, departure_time=parts[2], arrival_time=parts[3], price=parts[4])
+            logger.debug('Added: %s' % self.proposals[key])
+
+def fake_waiting(secs):
+    if not opts.nopause:
+        time.sleep(secs)
+
+def parse_proposals(req):
+    logger.debug('Opening: %s' % req)
+    o = opener.open(req)
     p = ProposalsParser()
-    p.feed(req.read())
+    p.feed(o.read())
     p.close()
-    return p.proposals
+    last_redirect = o.geturl()
+    last_hid = re.search(r'hid=(.+)$', last_redirect).group(1)
+    return p.proposals, p.end_of_day, last_hid
         
-def lastProposals():
+def query_proposals():
     outward_proposals = {}
     inward_proposals = {}
 
@@ -100,60 +105,40 @@ def lastProposals():
                  '%(outward_time)s&inward_date=%(inward_date)s&inward_time=' \
                  '%(inward_time)s&nbPassenger=1&classe=2&train=Rechercher' % search_params
 
-    proxy_handler = urllib2.ProxyHandler() #{'http': 'http://127.0.0.1:8181', 'https': 'http://127.0.0.1:8181'})
-    headers = {'User-Agent': 'Mozilla/4.0 (compatible; MSIE 6.0; Windows NT 5.1)', 
-        'Referer': 'http://www.voyages-sncf.com/'}
+    html = opener.open(search_url).read()
+    outward_proposals_url = re.search(r'<a href="([^"]+)" id="url_redirect_proposals"', html, re.M).group(1)
 
-    opener = urllib2.build_opener(proxy_handler, MyDefaultErrorHandler(), 
-        MyRedirectHandler(), urllib2.HTTPCookieProcessor())
-    opener.addheaders = headers.items()
+    fake_waiting(5) # behave as a browser waiting to be redirected
+    outward_proposals, end_of_day, last_hid = parse_proposals(outward_proposals_url)
 
-    for line in opener.open(search_url).read().splitlines():
-        r = re.match(r'\s*<a href="([^"]+)" id="url_redirect_proposals"', line)
-        if r:
-            outward_proposals_url = r.group(1) 
-            break
+    # get next trains
+    while not end_of_day:
+        next_proposals_url = 'http://www.voyages-sncf.com/weblogic/proposals/nextTrains?hid=%s' \
+            '&rfrr=PropositionAller_body_Trains%%20suivants' % last_hid
+        fake_waiting(2)
+        new_proposals, end_of_day, last_hid = parse_proposals(next_proposals_url)
+        outward_proposals.update(new_proposals)
 
-    time.sleep(5) # behave as a browser waiting to be redirected
-    o = opener.open(outward_proposals_url)
-    outward_proposals = getProposals(o)
-
-    # query next trains
-    last_redirect = o.geturl()
-    outward_hid = re.search(r'hid=(.+)$', last_redirect).group(1)
-    next_proposals_url = 'http://www.voyages-sncf.com/weblogic/proposals/nextTrains?hid=%s' \
-        '&rfrr=PropositionAller_ColA_Trains%%20suivants' % outward_hid
-    outward_proposals.update(getProposals(opener.open(next_proposals_url)))
-
-    # offline testing
-    #outward_proposals = getProposals(open('/tmp/outward_raw.ok')) 
-
-    if opts.inward_date and opts.inward_time:
+    if opts.inward_date:
         post_body = '_DIALOG=&hf_help=null&hid=%s&fromProposal=true&formName=journey_0' \
                     '&UPGRADED_PREFIX_ID_JOURNEY_ID_PROPOSAL=notUpgraded_0_0' \
-                    '&action%%3Abook=Valider+cet+aller' % outward_hid
-        referer = 'http://www.voyages-sncf.com/billet-train/resultats?hid=%s' % outward_hid
-        req = urllib2.Request('http://www.voyages-sncf.com/weblogic/proposals/', data=post_body, 
-                              headers={'Referer': referer})
-        time.sleep(5) # behave as an end-user reading through the proposals
-        o = opener.open(req)
-        inward_proposals = getProposals(o)
+                    '&action%%3Abook=Valider+cet+aller' % last_hid
+        referer = 'http://www.voyages-sncf.com/billet-train/resultats?hid=%s' % last_hid
+        req = urllib2.Request('http://www.voyages-sncf.com/weblogic/proposals/', data=post_body, headers={'Referer': referer})
+        fake_waiting(5)
+        inward_proposals, end_of_day, last_hid = parse_proposals(req)
 
-        # query next trains
-        last_redirect = o.geturl()
-        inward_hid = re.search(r'hid=(.+)$', last_redirect).group(1)
-        next_proposals_url = 'http://www.voyages-sncf.com/weblogic/proposals/nextTrains?hid=%s' \
-            '&rfrr=PropositionRetour_ColA_Trains%%20suivants' % inward_hid
-        inward_proposals.update(getProposals(opener.open(next_proposals_url)))
-
-        # offline testing
-        #inward_proposals = getProposals(open('/tmp/inward_raw.ok')) 
+        # get next trains
+        while not end_of_day:
+            next_proposals_url = 'http://www.voyages-sncf.com/weblogic/proposals/nextTrains?hid=%s' \
+                '&rfrr=PropositionRetour_body_Trains%%20suivants' % last_hid
+            fake_waiting(2)
+            new_proposals, end_of_day, last_hid = parse_proposals(next_proposals_url)
+            inward_proposals.update(new_proposals)
 
     return (outward_proposals, inward_proposals)
 
-def sendEmail(outward_report, inward_report):
-    if not (opts.to_addr and opts.from_addr): return
-
+def send_email(outward_report, inward_report):
     msg = ''
     if outward_report:
         msg += '\n// Aller: %s -> %s\n' % (opts.origin_city, opts.destination_city)
@@ -189,7 +174,7 @@ def sendEmail(outward_report, inward_report):
 #             '6487': {'id': '6487', 'price': '70'},
 #             '3242': {'id': '3242', 'price': '13.9'}}
 # proposal: {'7699': {'id': '7699', 'price': '29.5'}
-def compareProposals(old_proposals, new_proposals):
+def compare_proposals(old_proposals, new_proposals):
     ret_report = []
     ret_proposals = {}
 
@@ -230,7 +215,7 @@ def compareProposals(old_proposals, new_proposals):
             ret_report.append('D  %s' % old_proposal_info)
     
     # check if it has become cheaper than before
-    if old_proposals:
+    if old_proposals and new_proposals:
         min_price = lambda p: min(p.itervalues(), key=lambda x: x.price).price
         old_minprice = min_price(old_proposals)
         new_minprice = min_price(new_proposals)
@@ -242,40 +227,38 @@ def compareProposals(old_proposals, new_proposals):
 
     return ret_proposals, ret_report
 
-def run():
+def run_loop():
     outward_proposals = {}
     inward_proposals = {}
-    first_time = False # if run for the first time, send an email even if user set reportall to false
 
     if opts.savefile and os.path.isfile(opts.savefile) and os.path.getsize(opts.savefile) > 0:
         fd = open(opts.savefile, 'rb')
         outward_proposals = pickle.load(fd)
         inward_proposals = pickle.load(fd)
         fd.close()
-    else:
-        first_time = True
 
     while True:
-        last_outward_proposals, last_inward_proposals = lastProposals() 
-        outward_proposals, outward_report = compareProposals(outward_proposals, last_outward_proposals)
-        inward_proposals, inward_report = compareProposals(inward_proposals, last_inward_proposals)
+        new_outward_proposals, new_inward_proposals = query_proposals() 
+        outward_proposals, outward_report = compare_proposals(outward_proposals, new_outward_proposals)
+        inward_proposals, inward_report = compare_proposals(inward_proposals, new_inward_proposals)
+        
+        inout_report = outward_report + inward_report
+        any_change = bool(filter(lambda r: re.match(r'↑|↓|N|D', r), inout_report))
+        any_cheaper = bool(filter(lambda r: re.match(r'YES|arf', r), inout_report))
 
-        any_change = bool(filter(lambda r: re.match(r'↑|↓|N|D', r), outward_report + inward_report))
-        any_cheaper = bool(filter(lambda r: re.match(r'YES|arf', r), outward_report + inward_report))
-
-        if (opts.reportall and any_change) or (not opts.reportall and any_cheaper) or first_time:
-            sendEmail(outward_report, inward_report)
+        if (opts.reportall and any_change) or (not opts.reportall and any_cheaper):
+            if opts.to_addr: send_email(outward_report, inward_report)
 
         if opts.savefile:
             fd = open(opts.savefile, 'wb')
             pickle.dump(outward_proposals, fd)
             pickle.dump(inward_proposals, fd)
             fd.close()
-            break
 
+        if not opts.interval: return
         time.sleep(opts.interval)
 
-def setupLogger():
+def setup_logger():
     if opts.syslog and os.path.exists('/dev/log'):
         handler = logging.handlers.SysLogHandler(address='/dev/log')
         log_fmt = '%(filename)s[%(process)d]: %(levelname)-5s - %(message)s'
@@ -285,12 +268,12 @@ def setupLogger():
     handler.setFormatter(logging.Formatter(log_fmt))
     handler.setLevel(logging.DEBUG)
     
-    logger = logging.getLogger('nevermind')
+    logger = logging.getLogger('sncf_moins_cher')
     logger.setLevel(opts.debug and logging.DEBUG or logging.INFO)
     logger.addHandler(handler)
     return logger
     
-def parseOptions():
+def parse_options():
     usage_str = 'usage: %prog [options]\n' \
         ' $ %prog --origin-city paris --destination-city dijon --departure-date 05/03/2010 --departure-time 17\n' \
         ' $ %prog --origin-city paris --destination-city dijon --departure-date 05/03/2010 --departure-time 17 ' \
@@ -314,11 +297,11 @@ def parseOptions():
         metavar='hour')
     
     group3 = OptionGroup(parser, 'General options')
-    group3.add_option('-c', '--continuous', dest='interval', type='int', help='Continuous mode (default). ' \
-        'Repeatedly run online queries every N seconds (default: 600 seconds)', metavar='N')
-    group3.add_option('-w', '--savefile', dest='savefile', help='Enable single run mode (useful for scheduled runs). ' \
-        'Run an online query and save proposals to file. Next run will load previously saved proposals from file, ' \
-        'run a new online query and report any changes (price drop/raise, ...)', metavar='filepath')
+    group3.add_option('-c', '--continuous', dest='interval', type='int', help='Continuous mode. ' \
+        'Repeatedly run queries every N seconds', metavar='N')
+    group3.add_option('-w', '--savefile', dest='savefile', help=
+        'Save proposals to file so that next run can compare new proposals with previously saved ones, ' \
+        'and report any changes (price drop/raise, ...)', metavar='filepath')
     group3.add_option('-a', '--report-all', dest='reportall', action='store_true', default=False, help='Send an ' \
         'email report for any price drop/raise, or any recently added/removed proposal. Default is to only mail ' \
         'a report when the lowest fare for a single trip becomes cheaper or more expensive')
@@ -328,6 +311,8 @@ def parseOptions():
         help='Enable logging to syslog')
     group3.add_option('-i', '--ignore', dest='ignore', action='append', default=[], help='Train to ignore. '\
         'Use this option multiple times to ignore more trains', metavar='trainID')
+    group3.add_option('-F', '--nopause', dest='nopause', action='store_true', default=False, 
+        help='Do not wait several seconds between requests in order to fake genuine user browsing')
 
     group4 = OptionGroup(parser, 'Required options to send email alerts')
     group4.add_option('-f', '--from', dest='from_addr', help='Sender email address', metavar='email')
@@ -343,18 +328,18 @@ def parseOptions():
     parser.option_groups.extend([group1, group2, group3, group4, group5])
     (opts, args) = parser.parse_args()
 
-    def is_date_valid(*args):
+    def check_date(*args):
       for d in args:
         if d is not None:
             datetime.strptime(d, '%d/%m/%Y')
          
-    def is_time_valid(*args):
+    def check_time(*args):
         for h in args:
           if h is not None:
             datetime.strptime(h, '%H')
 
-    is_date_valid(opts.outward_date, opts.inward_date)
-    is_time_valid(opts.outward_time, opts.inward_time) 
+    check_date(opts.outward_date, opts.inward_date)
+    check_time(opts.outward_time, opts.inward_time) 
 
     if not (opts.origin_city and opts.destination_city and opts.outward_date and opts.outward_time):
         parser.error('Missing required option')
@@ -364,22 +349,28 @@ def parseOptions():
         parser.error('Missing required option to send email alerts')
     if bool(opts.gmail_user) ^ bool(opts.gmail_password):
         parser.error('Missing required option to use GMail SMTP server')
-    if opts.interval is not None:
-        if opts.savefile:
-            parser.error('Choose either continuous or single mode')
-        elif not opts.interval > 0:
-            parser.error('Seconds must be > 0')
-    else:
-        opts.interval = 600 # default is to wait 10' between each online query
+    if opts.interval and not opts.interval > 0:
+        parser.error('Seconds must be > 0')
 
     return opts
 
+def init_opener():
+    proxy = urllib2.ProxyHandler({}) #{'http': 'http://127.0.0.1:8082', 'https': 'http://127.0.0.1:8082'})
+    headers = {'User-Agent': 'Mozilla/4.0 (compatible; MSIE 6.0; Windows NT 5.1)', 
+               'Referer': 'http://www.voyages-sncf.com/'}
+    opener = urllib2.build_opener(proxy, urllib2.HTTPCookieProcessor())
+    opener.addheaders = headers.items()
+    return opener
+
 if __name__ == '__main__':
     try:
-        opts = parseOptions()
-        logger = setupLogger()
-        run()
+        opts = parse_options()
+        logger = setup_logger()
+        opener = init_opener()
+        run_loop()
 
     except KeyboardInterrupt:
         print 'KeyboardInterrupt, exiting...'
         sys.exit(1)
+
+# vim: ts=4 sw=4 sts=4 et
