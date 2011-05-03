@@ -59,7 +59,7 @@ class ProposalsParser(SGMLParser):
 
     def start_td(self, attrs):
         if self.in_departure:
-            self.in_today = dict(attrs)['class'] == ''
+            self.in_today = dict(attrs)['class'] in ('', 'last-row')
             if not self.in_today:
                 self.end_of_day = True
 
@@ -355,7 +355,7 @@ def parse_options():
     return opts
 
 def init_opener():
-    proxy = urllib2.ProxyHandler({}) #{'http': 'http://127.0.0.1:8082', 'https': 'http://127.0.0.1:8082'})
+    proxy = urllib2.ProxyHandler({}) #'http': 'http://127.0.0.1:8082', 'https': 'http://127.0.0.1:8082'})
     headers = {'User-Agent': 'Mozilla/4.0 (compatible; MSIE 6.0; Windows NT 5.1)', 
                'Referer': 'http://www.voyages-sncf.com/'}
     opener = urllib2.build_opener(proxy, urllib2.HTTPCookieProcessor())
